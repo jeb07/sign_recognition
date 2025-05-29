@@ -3,6 +3,8 @@ import numpy as np
 import os
 import sys
 import tensorflow as tf
+from collections import Counter
+import random # Import random for selecting one image
 
 from sklearn.model_selection import train_test_split
 
@@ -18,20 +20,28 @@ def main():
     Load image data, build and train a neural network, and evaluate performance.
     """
     # Check command-line arguments
-    if len(sys.argv) not in [2, 3]:
-        sys.exit("Usage: python traffic.py data_directory [model.h5]")
+    if len(sys.argv) != 2: # Modified to expect only one argument (data_directory)
+        sys.exit("Usage: python traffic.py data_directory")
 
     # Get image arrays and labels for all image files
     images, labels = load_data(sys.argv[1])
 
-    # Calculate and print the occurrence rate of each sign type
-    print_occurrence_rate(labels)
-
     # Split data into training and testing sets
-    labels = tf.keras.utils.to_categorical(labels)
-    x_train, x_test, y_train, y_test = train_test_split(
-        np.array(images), np.array(labels), test_size=TEST_SIZE
+    labels_np = np.array(labels)
+    x_train, x_test, y_train_raw, y_test_raw = train_test_split(
+        np.array(images), labels_np, test_size=TEST_SIZE, random_state=42
     )
+
+    # Identify top 5 most common sign types from training data
+    top_5_categories = get_top_n_categories(y_train_raw, 5)
+    print(f"Top 5 most common sign categories in training data: {top_5_categories}")
+
+    # Convert and save a single random image for each of the top 5 categories
+    save_one_random_image_per_category(x_train, y_train_raw, top_5_categories)
+
+    # Convert labels to categorical for model training
+    y_train = tf.keras.utils.to_categorical(y_train_raw)
+    y_test = tf.keras.utils.to_categorical(y_test_raw)
 
     # Get a compiled neural network
     model = get_model()
@@ -44,11 +54,7 @@ def main():
     print(f"Test Loss: {loss:.4f}")
     print(f"Test Accuracy: {accuracy:.4f}")
 
-    # Save model to file
-    if len(sys.argv) == 3:
-        filename = sys.argv[2]
-        model.save(filename)
-        print(f"Model saved to {filename}.")
+    # Removed the model saving part
 
 
 def load_data(data_dir):
@@ -67,6 +73,7 @@ def load_data(data_dir):
     """
     images = []
     labels = []
+    print(f"Loading data from {data_dir}...")
     for category in range(NUM_CATEGORIES):
         category_path = os.path.join(data_dir, str(category))
         if not os.path.isdir(category_path):
@@ -81,28 +88,46 @@ def load_data(data_dir):
                     labels.append(category)
             except Exception as e:
                 print(f"Error loading image {img_path}: {e}")
+    print("Data loading complete.")
     return images, labels
 
 
-def print_occurrence_rate(labels):
+def get_top_n_categories(labels, n):
     """
-    Calculates and prints the occurrence rate of each sign type.
+    Identifies the top N most common categories from a list of labels.
+    Returns a list of category IDs.
     """
-    # Count occurrences of each label
-    label_counts = np.bincount(labels)
+    label_counts = Counter(labels)
+    top_n = [label for label, count in label_counts.most_common(n)]
+    return top_n
 
-    # Calculate total number of samples
-    total_samples = len(labels)
 
-    print("\n--- Sign Type Occurrence Rates ---")
-    for i in range(NUM_CATEGORIES):
-        if i < len(label_counts): # Ensure category exists in counts
-            count = label_counts[i]
-            percentage = (count / total_samples) * 100
-            print(f"Category {i}: {count} occurrences ({percentage:.2f}%)")
+def save_one_random_image_per_category(images, labels, top_categories):
+    """
+    Selects one random image from each of the specified top categories
+    and saves them as .png files.
+    """
+    output_dir = "random_top_5_sign_samples_png"
+    os.makedirs(output_dir, exist_ok=True)
+    print(f"\nSaving one random image per top {len(top_categories)} categories to '{output_dir}'...")
+
+    # Group images by category
+    category_images = {category: [] for category in top_categories}
+    for i, category in enumerate(labels):
+        if category in top_categories:
+            category_images[category].append(images[i])
+
+    # Select and save one random image for each category
+    for category_id in top_categories:
+        if category_images[category_id]: # Ensure there are images for this category
+            random_image = random.choice(category_images[category_id])
+            filename = f"random_sample_category_{category_id}.png"
+            filepath = os.path.join(output_dir, filename)
+            cv2.imwrite(filepath, random_image)
+            print(f"Saved: {filepath}")
         else:
-            print(f"Category {i}: 0 occurrences (0.00%)")
-    print("--------------------------------\n")
+            print(f"No images found for category {category_id} in the training set.")
+    print("Random image saving complete.")
 
 
 def get_model():
